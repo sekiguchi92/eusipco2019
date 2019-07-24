@@ -6,11 +6,9 @@ import sys, os
 from progressbar import progressbar
 import librosa
 import soundfile as sf
-import time
 import pickle as pic
 
 from configure_FastModel import *
-from calculate_separation_performance import calculate_SDR_SIR_SAR
 
 sys.path.append("../CupyLibrary")
 try:
@@ -26,13 +24,6 @@ try:
 except:
     print("---Warning--- You cannot use cupy inverse calculation")
     FLAG_CupyInverse_Enabled = False
-
-try:
-    from cupy_eig import det_Hermitian
-    FLAG_CupyDeterminant_Enabled = True
-except:
-    print("---Warning--- You cannot use cupy complex determinant (this function is useful only when you calculate log likelihood)")
-    FLAG_CupyDeterminant_Enabled = False
 
 
 class FastFCA():
@@ -161,7 +152,7 @@ class FastFCA():
         else:
             print("====================\n\nWarning: Please set self.file_id\n\n====================")
 
-        print("fileName_suffix:", self.fileName_suffix)
+        print("parameter:", self.fileName_suffix)
         return self.fileName_suffix
 
 
@@ -245,7 +236,7 @@ class FastFCA():
 
 
     def normalize(self):
-        phi_F = self.xp.trace(self.diagonalizer_FMM @ self.diagonalizer_FMM.conj().transpose(0, 2, 1), axis1=1, axis2=2).real / self.NUM_mic
+        phi_F = self.xp.sum(self.diagonalizer_FMM * self.diagonalizer_FMM.conj(), axis=(1, 2)).real / self.NUM_mic
         self.diagonalizer_FMM = self.diagonalizer_FMM / self.xp.sqrt(phi_F)[:, None, None]
         self.covarianceDiag_NFM = self.covarianceDiag_NFM / phi_F[None, :, None]
 
@@ -257,10 +248,7 @@ class FastFCA():
 
 
     def calculate_log_likelihood(self):
-        if FLAG_CupyDeterminant_Enabled:
-            return (-(self.Qx_power_FTM / self.Y_FTM).sum() + self.NUM_time * self.xp.log(det_Hermitian(self.diagonalizer_FMM @ self.diagonalizer_FMM.conj().transpose(0, 2, 1) ) ).sum() - self.xp.log(self.Y_FTM).sum()).real - self.NUM_mic * self.NUM_freq * self.NUM_time * self.xp.log(self.xp.pi)
-        else:
-            return (-(self.Qx_power_FTM / self.Y_FTM).sum() + self.NUM_time * np.log(np.linalg.det(self.convert_to_NumpyArray(self.diagonalizer_FMM @ self.diagonalizer_FMM.conj().transpose(0, 2, 1) ) ) ).sum() - self.xp.log(self.Y_FTM).sum()).real - self.NUM_mic * self.NUM_freq * self.NUM_time * np.log(np.pi)
+        return (-(self.Qx_power_FTM / self.Y_FTM).sum() + self.NUM_time * np.log(np.linalg.det(self.convert_to_NumpyArray(self.diagonalizer_FMM @ self.diagonalizer_FMM.conj().transpose(0, 2, 1) ) ) ).sum() - self.xp.log(self.Y_FTM).sum()).real - self.NUM_mic * self.NUM_freq * self.NUM_time * np.log(np.pi)
 
 
     def calculate_covarianceMatrix(self):
@@ -320,30 +308,19 @@ class FastFCA():
         self.NUM_mic = self.covarianceDiag_NFM.shape[-1]
 
 
-    def calculate_separation_performance(self):
-        if self.MODE_initialize_covarianceMatrix == "obs":
-            separated_sig = librosa.core.istft(self.separated_spec[0])
-        else:
-            for n in range(self.NUM_source):
-                tmp = librosa.core.istft(self.separated_spec[n])
-                if n == 0:
-                    separated_sig = np.zeros([self.NUM_source, len(tmp)])
-                separated_sig[n] = tmp
-        sdr = calculate_SDR_SIR_SAR(self.wav_org, separated_sig)[0][0]
-        return sdr
-
-
 if __name__ == "__main__":
     import sys, os
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument(             '--gpu', type=  int, default=    0, help='GPU ID')##
+    parser.add_argument(    'input_fileName', type= str, help='filename of the multichannel observed signals')
+    parser.add_argument(         '--file_id', type= str, default="None", help='file id')
+    parser.add_argument(             '--gpu', type=  int, default=    0, help='GPU ID')
     parser.add_argument(           '--n_fft', type=  int, default= 1024, help='number of frequencies')
-    parser.add_argument(       '--NUM_noise', type=  int, default=    1, help='number of noise')
+    parser.add_argument(      '--NUM_source', type=  int, default=    2, help='number of noise')
     parser.add_argument(   '--NUM_iteration', type=  int, default=  100, help='number of iteration')
     parser.add_argument(       '--NUM_basis', type=  int, default=    8, help='number of basis')
-    parser.add_argument( '--MODE_initialize_covarianceMatrix', type=  str, default="obs", help='cGMM, cGMM2, unit, obs')
+    parser.add_argument( '--MODE_initialize_covarianceMatrix', type=  str, default="obs", help='unit, obs')
     args = parser.parse_args()
 
     if args.gpu < 0:
@@ -353,7 +330,7 @@ if __name__ == "__main__":
         print("Use GPU " + str(args.gpu))
         cuda.get_device_from_id(args.gpu).use()
 
-    wav, fs = sf.read("../../data/chime/F04_050C0115_CAF.CH13456.wav")
+    wav, fs = sf.read(args.input_fileName)
     wav = wav.T
     M = len(wav)
     for m in range(M):
@@ -362,7 +339,7 @@ if __name__ == "__main__":
             spec = np.zeros([tmp.shape[0], tmp.shape[1], M], dtype=np.complex)
         spec[:, :, m] = tmp
 
-    separater = FastFCA(NUM_source=args.NUM_noise+1, xp=xp, MODE_initialize_covarianceMatrix=args.MODE_initialize_covarianceMatrix)
+    separater = FastFCA(NUM_source=args.NUM_source, xp=xp, MODE_initialize_covarianceMatrix=args.MODE_initialize_covarianceMatrix)
     separater.load_spectrogram(spec)
     separater.file_id = file_id
-    separater.solve(NUM_iteration=args.NUM_iteration, save_likelihood=False, save_parameter=False, save_wav=False, save_path="./", interval_save_parameter=1000)
+    separater.solve(NUM_iteration=args.NUM_iteration, save_likelihood=False, save_parameter=False, save_wav=False, save_path="./", interval_save_parameter=25)
