@@ -16,6 +16,7 @@ try:
 except:
     print("---Warning--- You cannot use GPU acceleration because chainer or cupy is not installed")
 
+
 class FastMNMF_DP(FastFCA):
 
     def __init__(self, speech_VAE=None, NUM_noise=1, NUM_Z_iteration=30, DIM_latent=16, NUM_basis_noise=2, xp=np, MODE_initialize_covarianceMatrix="unit", MODE_update_Z="sampling", normalize_encoder_input=True):
@@ -37,36 +38,15 @@ class FastMNMF_DP(FastFCA):
                 how to update latent variable Z {sampling, backprop}
         """
         super(FastMNMF_DP, self).__init__(NUM_source=NUM_noise+1, xp=xp, MODE_initialize_covarianceMatrix=MODE_initialize_covarianceMatrix)
-        self.NUM_source, self.NUM_speech, self.NUM_noise = NUM_noise+1, 1, NUM_noise
         self.speech_VAE = speech_VAE
+        self.xp = self.speech_VAE.xp
+        self.NUM_source, self.NUM_speech, self.NUM_noise = NUM_noise+1, 1, NUM_noise
         self.NUM_Z_iteration = NUM_Z_iteration
         self.NUM_basis_noise = NUM_basis_noise
         self.DIM_latent = DIM_latent
         self.MODE_update_Z = MODE_update_Z
         self.normalize_encoder_input = normalize_encoder_input
         self.method_name = "FastMNMF_DP"
-
-
-    def load_spectrogram(self, X_FTM):
-        """ load complex spectrogram
-        Parameters:
-        -----------
-        X_FTM: xp.array [F x T x M]
-        """
-        self.xp = self.speech_VAE.xp
-        super(FastMNMF_DP, self).load_spectrogram(X_FTM)
-        self.u_F = self.xp.random.rand(self.NUM_freq).astype(self.xp.float)
-        self.v_T = (self.xp.random.rand(self.NUM_time).astype(self.xp.float) * 0.9) + 0.1
-        self.Z_speech_DT = self.xp.random.normal(0, 1, [self.DIM_latent, self.NUM_time]).astype(self.xp.float32)
-        self.z_link_speech = Z_link(self.Z_speech_DT.T)
-        self.z_optimizer_speech = chainer.optimizers.Adam().setup(self.z_link_speech)
-
-        self.W_noise_NnFK = self.xp.abs(self.xp.random.rand(self.NUM_noise, self.NUM_freq, self.NUM_basis_noise).astype(self.xp.float))
-        self.H_noise_NnKT = self.xp.abs(self.xp.random.rand(self.NUM_noise, self.NUM_basis_noise, self.NUM_time).astype(self.xp.float))
-
-        self.power_speech_FT = self.speech_VAE.decode_cupy(self.Z_speech_DT)
-        self.lambda_NFT[0] = self.u_F[:, None] * self.v_T[None] * self.power_speech_FT
-        self.lambda_NFT[1:] = self.W_noise_NnFK @ self.H_noise_NnKT
 
 
     def set_parameter(self, NUM_noise=None, NUM_iteration=None, NUM_Z_iteration=None, NUM_basis_noise=None, MODE_initialize_covarianceMatrix=None, MODE_update_Z=None):
@@ -110,12 +90,11 @@ class FastMNMF_DP(FastFCA):
         power_observation_FT = (self.xp.abs(self.X_FTM) ** 2).mean(axis=2)
         shape = 2
         self.W_noise_NnFK = self.xp.random.dirichlet(np.ones(self.NUM_freq)*shape, size=[self.NUM_noise, self.NUM_basis_noise]).transpose(0, 2, 1)
-
-        self.H_noise_NnKT[:] = self.xp.random.gamma(shape, (power_observation_FT.mean() * self.NUM_freq * self.NUM_mic / (self.NUM_noise * self.NUM_basis_noise)) / shape, size=[self.NUM_noise, self.NUM_basis_noise, self.NUM_time])
+        self.H_noise_NnKT = self.xp.random.gamma(shape, (power_observation_FT.mean() * self.NUM_freq * self.NUM_mic / (self.NUM_noise * self.NUM_basis_noise)) / shape, size=[self.NUM_noise, self.NUM_basis_noise, self.NUM_time])
         self.H_noise_NnKT[self.H_noise_NnKT < EPS] = EPS
 
-        self.u_F[:] = 1 / self.NUM_freq
-        self.v_T[:] = 1
+        self.u_F = self.xp.ones(self.NUM_freq) / self.NUM_freq
+        self.v_T = self.xp.ones(self.NUM_time)
 
         if self.normalize_encoder_input:
             power_observation_FT = power_observation_FT / power_observation_FT.sum(axis=0).mean()
@@ -125,13 +104,13 @@ class FastMNMF_DP(FastFCA):
         self.z_optimizer_speech = chainer.optimizers.Adam().setup(self.z_link_speech)
         self.power_speech_FT = self.speech_VAE.decode_cupy(self.Z_speech_DT)
 
+        self.lambda_NFT = self.xp.zeros([self.NUM_source, self.NUM_freq, self.NUM_time])
         self.lambda_NFT[0] = self.u_F[:, None] * self.v_T[None] * self.power_speech_FT
         self.lambda_NFT[1:] = self.W_noise_NnFK @ self.H_noise_NnKT
-        self.reset_variable()
 
 
     def make_fileName_suffix(self):
-        self.fileName_suffix = "N={}-it={}-itZ={}-Ln={}-D={}-init={}-latent={}".format(self.NUM_noise, self.NUM_iteration, self.NUM_Z_iteration, self.NUM_basis_noise, self.DIM_latent, self.MODE_initialize_covarianceMatrix, self.MODE_update_Z)
+        self.fileName_suffix = "S={}-it={}-itZ={}-Ln={}-D={}-init={}-latent={}".format(self.NUM_source, self.NUM_iteration, self.NUM_Z_iteration, self.NUM_basis_noise, self.DIM_latent, self.MODE_initialize_covarianceMatrix, self.MODE_update_Z)
 
         if hasattr(self, "name_DNN"):
             self.fileName_suffix += "-DNN={}".format(self.name_DNN)
@@ -268,12 +247,14 @@ class FastMNMF_DP(FastFCA):
         self.lambda_NFT, self.covarianceDiag_NFM, self.diagonalizer_FMM, self.u_F, self.v_T, self.Z_speech_DT, self.W_noise_NnFK, self.H_noise_NnKT = param_list
 
 
+
 class Z_link(chainer.link.Link):
     def __init__(self, z):
         super(Z_link, self).__init__()
 
         with self.init_scope():
             self.z = chainer.Parameter(z)
+
 
 
 if __name__ == "__main__":
