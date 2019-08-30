@@ -19,23 +19,27 @@ except:
 
 class FastMNMF_DP(FastFCA):
 
-    def __init__(self, speech_VAE=None, NUM_noise=1, NUM_Z_iteration=30, DIM_latent=16, NUM_basis_noise=2, xp=np, MODE_initialize_covarianceMatrix="unit", MODE_update_Z="sampling", normalize_encoder_input=True):
+    def __init__(self, speech_VAE=None, NUM_noise=1, NUM_basis_noise=2, xp=np, MODE_initialize_covarianceMatrix="unit", MODE_update_Z="sampling", NUM_Z_iteration=30, DIM_latent=16, normalize_encoder_input=True):
         """ initialize FastMNMF_DP
 
         Parameters:
         -----------
+            speech_VAE: VAE
+                trained speech VAE network
             NUM_noise: int
                 the number of noise sources
-            speech_VAE: VAE
-                trained speech VAE network (necessary if you use VAE as speech model)
-            DIM_latent: int
-                the dimension of latent variable Z
             NUM_basis_noise: int
                 the number of bases of each noise source
             MODE_initialize_covarianceMatrix: str
                 how to initialize covariance matrix {unit, obs, cGMM, cGMM2(only speech)}
             MODE_update_Z: str
                 how to update latent variable Z {sampling, backprop}
+            NUM_Z_iteration: int
+                the number of iteration for updating Z per global iteration
+            DIM_latent: int
+                the dimension of latent variable Z
+            normalize_encoder_input: boolean
+                normalize observation to initialize latent variable by feeding the observation into a encoder
         """
         super(FastMNMF_DP, self).__init__(NUM_source=NUM_noise+1, xp=xp, MODE_initialize_covarianceMatrix=MODE_initialize_covarianceMatrix)
         self.speech_VAE = speech_VAE
