@@ -1,5 +1,6 @@
 # eusipco2019
 The code for multi-channel speech enhancement (and source separation) which will be presented at EUSIPCO2019.
+The latest version is available in https://github.com/sekiguchi92/SpeechEnhancement.
   - FastFCA is a method for general source separation. In fact, it can be available only for speech enhancement because of the strong initial value dependency.
   - FastMNMF is a general source separation method which integrate NMF-based source model into FastFCA.
   - FastMNMF-DP is a method which integrates deep speech prior into FastMNMF, and is for speech enhancement.
